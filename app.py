@@ -12,6 +12,7 @@ import pickle
 import tensorflow as tf
 import plotly.graph_objects as go
 import plotly.express as px
+import os 
 
 # ==============================================================================
 # 1. SEITEN-KONFIGURATION
@@ -38,19 +39,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. MODELL & PIPELINE LADEN (MIT CACHING)
+# 2. MODELL & PIPELINE LADEN (MIT CACHING & ABSOLUTEN PFADEN)
 # ==============================================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+MODEL_PATH = os.path.join(BASE_DIR, "autoencoder_model.keras")
+SCALER_PATH = os.path.join(BASE_DIR, "scaler_pt.pkl")
+CALIBRATOR_PATH = os.path.join(BASE_DIR, "calibrator.pkl")
+
 @st.cache_resource
 def load_artifacts():
     # Autoencoder
-    model = tf.keras.models.load_model("autoencoder_model.keras") 
+    model = tf.keras.models.load_model(MODEL_PATH) 
     
     # Scaler (PowerTransformer)
-    with open("scaler_pt.pkl", "rb") as f:
+    with open(SCALER_PATH, "rb") as f:
         scaler = pickle.load(f)
         
     # Calibrator (Platt Scaling)
-    with open("calibrator.pkl", "rb") as f:
+    with open(CALIBRATOR_PATH, "rb") as f:
         calibrator = pickle.load(f)
         
     return model, scaler, calibrator
