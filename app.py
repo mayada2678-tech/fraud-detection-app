@@ -5,14 +5,15 @@ Created on Sat Jul 25 07:12:26 2026
 @author: mayad
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
+import os
 import pickle
+import numpy as np
+import pandas as pd
+import streamlit as st
 import tensorflow as tf
+from tensorflow.keras import layers, models
 import plotly.graph_objects as go
 import plotly.express as px
-import os 
 
 # ==============================================================================
 # 1. SEITEN-KONFIGURATION
@@ -39,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 2. MODELL & PIPELINE LADEN (MIT CACHING & ABSOLUTEN PFADEN)
+# 2. MODELL & PIPELINE LADEN (ROBUST & VERSIONSUNABHÄNGIG)
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -49,16 +50,29 @@ CALIBRATOR_PATH = os.path.join(BASE_DIR, "calibrator.pkl")
 
 @st.cache_resource
 def load_artifacts():
-    # Autoencoder
-    model = tf.keras.models.load_model(MODEL_PATH) 
-    
-    # Scaler (PowerTransformer)
+    # 1. Scaler (PowerTransformer)
     with open(SCALER_PATH, "rb") as f:
         scaler = pickle.load(f)
         
-    # Calibrator (Platt Scaling)
+    # 2. Calibrator (Platt Scaling)
     with open(CALIBRATOR_PATH, "rb") as f:
         calibrator = pickle.load(f)
+        
+    # 3. Autoencoder laden (mit Fallback auf Gewichte-Laden für Keras 3 Kompatibilität)
+    try:
+        model = tf.keras.models.load_model(MODEL_PATH, safe_mode=False)
+    except Exception:
+        # Architektur aus Konfiguration neu aufbauen (29 Inputs -> 14 -> 7 -> 7 -> 29)
+        input_dim = 29
+        input_layer = layers.Input(shape=(input_dim,), name="input_layer_1")
+        x = layers.Dense(14, activation="tanh", name="dense_4")(input_layer)
+        x = layers.Dense(7, activation="relu", name="dense_5")(x)
+        x = layers.Dense(7, activation="tanh", name="dense_6")(x)
+        output_layer = layers.Dense(input_dim, activation="relu", name="dense_7")(x)
+        
+        model = models.Model(inputs=input_layer, outputs=output_layer)
+        model.compile(optimizer='adam', loss='mean_squared_error')
+        model.load_weights(MODEL_PATH)
         
     return model, scaler, calibrator
 
@@ -116,11 +130,8 @@ with tab1:
     with col2:
         v1_sim = st.slider("Auffälligkeits-Indikator V1 (Simuliert)", -5.0, 5.0, 0.0)
 
-    # Zufällige Feature-Vektoren für V1..V28 (29 Features insgesamt inkl. Amount)
-    # Für die Demo: Wir bauen eine Test-Zeile auf
     if st.button("🚀 Transaktion analysieren", type="primary"):
         # Erstelle Beispiel-Feature-Array (29 Features: V1-V28 + Amount)
-        # Normalverteilte Dummy-Werte um 0
         sample_features = np.zeros((1, 29))
         sample_features[0, 0] = v1_sim  # V1
         sample_features[0, -1] = amount # Amount
@@ -178,7 +189,7 @@ with tab1:
 # ------------------------------------------------------------------------------
 with tab2:
     st.subheader("📁 CSV-Datei für Batch-Verarbeitung hochladen")
-    uploaded_file = st.file_content = st.file_uploader("Upload 'creditcard.csv' oder Test-Subset", type=["csv"])
+    uploaded_file = st.file_uploader("Upload 'creditcard.csv' oder Test-Subset", type=["csv"])
     
     if uploaded_file is not None:
         df_batch = pd.read_csv(uploaded_file)
