@@ -121,20 +121,29 @@ tab1, tab2 = st.tabs(["🔍 Einzeltransaktion Prüfen", "📊 Batch-Analyse & St
 # ------------------------------------------------------------------------------
 # TAB 1: EINZELPRÜFUNG (LIVE-DEMO)
 # ------------------------------------------------------------------------------
+# TAB 1: EINZELPRÜFUNG (LIVE-DEMO)
+# ------------------------------------------------------------------------------
 with tab1:
     st.subheader("Transaktionsdaten eingeben")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        amount = st.number_input("Transaktionsbetrag (€)", min_value=0.0, value=149.99, step=10.0)
+        amount = st.number_input("Transaktionsbetrag (€)", min_value=0.0, value=1589.99, step=50.0)
     with col2:
-        v1_sim = st.slider("Auffälligkeits-Indikator V1 (Simuliert)", -5.0, 5.0, 0.0)
+        v1_sim = st.slider("Auffälligkeit / Abweichung V1", -15.0, 5.0, 0.0, help="Negative Werte (-5 bis -15) deuten bei Kreditkarten-Anomalien oft auf Betrug hin.")
+    with col3:
+        v4_sim = st.slider("Auffälligkeit / Abweichung V4", -5.0, 15.0, 0.0, help="Hohe positive Werte (>4) stehen oft im Zusammenhang mit Betrugs-Mustern.")
 
     if st.button("🚀 Transaktion analysieren", type="primary"):
-        # Erstelle Beispiel-Feature-Array (29 Features: V1-V28 + Amount)
+        # Erstelle ein 1x29 Array (V1 bis V28 + Amount)
         sample_features = np.zeros((1, 29))
-        sample_features[0, 0] = v1_sim  # V1
-        sample_features[0, -1] = amount # Amount
+        
+        # V-Features belegen (Index 0 = V1, Index 3 = V4)
+        sample_features[0, 0] = v1_sim
+        sample_features[0, 3] = v4_sim
+        
+        # Betrag (Amount)
+        sample_features[0, -1] = amount 
         
         # 1. Skalieren mit PowerTransformer
         scaled_features = scaler.transform(sample_features)
@@ -157,7 +166,7 @@ with tab1:
         # Decision Logic (3-Stufen Ampel)
         if prob >= red_thresh:
             m_col3.error("🔴 ACTION: BLOCK (Betrugsverdacht)")
-            st.error(f"⚠️ **HOCHES RISIKO ({prob*100:.1f}%):** Die Transaktion überschreitet die Sperrschwelle von {red_thresh*100:.0f}%. Sie wurde blockiert und an das Fraud-Team weitergeleitet.")
+            st.error(f"⚠️ **HOHES RISIKO ({prob*100:.1f}%):** Die Transaktion überschreitet die Sperrschwelle von {red_thresh*100:.0f}%. Sie wurde blockiert und an das Fraud-Team weitergeleitet.")
         elif prob >= yellow_thresh:
             m_col3.warning("🟡 ACTION: 2FA PRÜFUNG")
             st.warning(f"⚡ **MITTLERES RISIKO ({prob*100:.1f}%):** Die Transaktion liegt über der Warnschwelle von {yellow_thresh*100:.0f}%. Der Kunde muss sich per 2FA/SMS verifizieren.")
@@ -183,7 +192,6 @@ with tab1:
         ))
         fig.update_layout(height=300)
         st.plotly_chart(fig, use_container_width=True)
-
 # ------------------------------------------------------------------------------
 # TAB 2: BATCH-ANALYSE & BUSINESS-IMPACT
 # ------------------------------------------------------------------------------
