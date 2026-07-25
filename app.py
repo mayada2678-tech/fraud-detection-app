@@ -2,120 +2,142 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-st.set_page_config(page_title="Echtzeit Fraud Detector", layout="wide")
+st.set_page_config(page_title="Fraud Detector - CSV & Verhalten", layout="wide")
 
-st.title("💳 Echtzeit-Kreditkarten-Betrugsdetektor")
-st.subheader("Verhaltensbasierte Transaktionsprüfung (Behavioral Fraud Engine)")
+st.title("💳 Betrugsdetektor: CSV-Historie & Live-Prüfung")
+st.write("Dieses System analysiert die Historie eines Kunden aus einer CSV-Datei und beurteilt eine **neue Transaktion** anhand seines bisherigen Verhaltens.")
 st.write("---")
 
-# ---------------------------------------------------------
-# EINGABEMASKE (Kundenprofil & Transaktionsdaten)
-# ---------------------------------------------------------
-st.header("🔍 Neue Transaktion prüfen")
+# =========================================================
+# SCHRITT 1: CSV Hochladen (Kunden-Historie)
+# =========================================================
+st.header("1. Kunden-Historie laden (CSV)")
 
-col1, col2, col3 = st.split_columns(3) if hasattr(st, 'split_columns') else st.columns(3)
+uploaded_file = st.file_uploader("Lade die Transaktions-Historie des Kunden hoch (.csv)", type=["csv"])
 
-with col1:
-    st.subheader("1. Die aktuelle Transaktion")
-    tx_amount = st.number_input("Aktueller Betrag (€)", min_value=1.0, max_value=50000.0, value=1000.0, step=10.0)
-    tx_location = st.selectbox("Standort der Zahlung", ["Inland (Normal)", "Ausland (Online)", "Risikoland (Sperrgebiet)"])
-    tx_count_24h = st.slider("Transaktionen in den letzten 24 Std.", 1, 30, 2)
+# Falls keine Datei hochgeladen wurde, erstellen wir Beispiel-Daten
+if uploaded_file is not None:
+    df_history = pd.read_csv(uploaded_file)
+    st.success("✅ CSV-Historie erfolgreich geladen!")
+else:
+    st.info("ℹ️ Keine CSV hochgeladen. Es werden Demo-Historien-Daten genutzt.")
+    # Erstelle Beispiel-Historie eines normalen Kunden
+    data = {
+        "transaktion_id": [f"TX{i}" for i in range(1, 21)],
+        "betrag": [15.50, 22.00, 8.90, 45.00, 12.00, 120.00, 18.50, 25.00, 30.00, 14.20,
+                   19.99, 85.00, 11.00, 40.00, 15.00, 22.50, 50.00, 9.90, 35.00, 28.00],
+        "kategorie": ["Supermarkt", "Tankstelle", "Bäcker", "Kleidung", "Bäcker", "Elektronik", 
+                      "Supermarkt", "Restaurant", "Supermarkt", "Bäcker", "Online", "Kleidung", 
+                      "Supermarkt", "Restaurant", "Bäcker", "Tankstelle", "Online", "Supermarkt", "Kleidung", "Supermarkt"]
+    }
+    df_history = pd.DataFrame(data)
 
-with col2:
-    st.subheader("2. Kunden-Historie & Profil")
-    user_avg_amount = st.number_input("Ø Betrag des Kunden bisher (€)", min_value=1.0, max_value=10000.0, value=25.0, step=5.0)
-    user_balance = st.number_input("Geschätztes Guthaben / Rahmen (€)", min_value=0.0, max_value=100000.0, value=1500.0, step=500.0)
-    user_risk_class = st.selectbox("Kunden-Risikoklasse", ["Standard", "VIP / Premium", "Neukunde (Unbekannt)"])
+# Historie in einem ausklappbaren Bereich anzeigen
+with st.expander("📊 Kundendaten & Historie aus der CSV anzeigen"):
+    st.dataframe(df_history)
 
-with col3:
-    st.subheader("3. Muster-Anomalie (KI-Merkmal)")
-    # V1 bis V28 Abweichung vereinfacht als ein Schieberegler simulieren
-    pattern_anomaly = st.slider("KI-Anomaliewert (Musterabweichung)", 0.0, 10.0, 1.2, help="Hohe Werte bedeuten unnormale technische Merkmale (z.B. IP, Device, Verschlüsselung).")
+# =========================================================
+# AUTOMATISCHE PROFIL-BERECHNUNG AUS DER CSV
+# =========================================================
+# Wir berechnen das Kundenprofil DIREKT aus der CSV!
+user_avg_amount = df_history["betrag"].mean()
+user_max_amount = df_history["betrag"].max()
+user_total_spent = df_history["betrag"].sum()
+total_transactions = len(df_history)
+
+# Angenommenes Kontoguthaben basierend auf Historie (oder Eingabe)
+estimated_balance = max(2000.0, user_total_spent * 1.5)
 
 st.write("---")
+st.header("2. Berechnetes Kundenprofil (aus CSV ermittelt)")
 
-# ---------------------------------------------------------
-# BEWERTUNGSLOGIK (Echte Regeln + KI-Score)
-# ---------------------------------------------------------
+col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+col_p1.metric("Ø Ausgaben / Kauf", f"{user_avg_amount:.2f} €")
+col_p2.metric("Höchster Bisheriger Kauf", f"{user_max_amount:.2f} €")
+col_p3.metric("Gesamtzahl Käufe (CSV)", f"{total_transactions}")
+col_p4.metric("Geschätztes Rahmen/Guthaben", f"{estimated_balance:.2f} €")
 
-# Berechnete Faktoren
-ratio = tx_amount / user_avg_amount if user_avg_amount > 0 else 999.0
+# =========================================================
+# SCHRITT 2: Neue Transaktion eingeben
+# =========================================================
+st.write("---")
+st.header("3. Neue Transaktion zur Beurteilung eingeben")
 
-# Risikopunkte sammeln
+col_in1, col_in2, col_in3 = st.columns(3)
+
+with col_in1:
+    new_tx_amount = st.number_input("Neuer Kaufbetrag (€)", min_value=1.0, max_value=50000.0, value=1000.0, step=10.0)
+
+with col_in2:
+    new_tx_location = st.selectbox("Standort", ["Inland (Normal)", "Ausland (Online)", "Risikoland"])
+
+with col_in3:
+    new_tx_24h_count = st.slider("Weitere Käufe in den letzten 24h", 0, 20, 1)
+
+# =========================================================
+# SCHRITT 3: LOGIK & BEURTEILUNG (Vergleich CSV vs. Neue Transaktion)
+# =========================================================
+st.write("---")
+st.header("⚖️ Beurteilung der neuen Transaktion")
+
+# Berechnung der Abweichung zur CSV-Historie
+ratio = new_tx_amount / user_avg_amount if user_avg_amount > 0 else 1.0
+
 risk_score = 0.0
 reasons = []
 
-# Regel 1: Abweichung vom normalen Kaufverhalten
-if ratio > 10 and user_balance < 3000:
-    risk_score += 0.45
-    reasons.append(f"⚠️ Der Betrag ist **{ratio:.1f}-mal höher** als der gewohnte Schnitt ({user_avg_amount} €) bei geringem Guthaben.")
-
-# Regel 2: Betrag übersteigt Guthaben/Rahmen deutlich
-if tx_amount > user_balance:
-    risk_score += 0.35
-    reasons.append("⚠️ Transaktionsbetrag übersteigt das verfügbare Kunden-Guthaben/Limit!")
-
-# Regel 3: Ungewöhnliche Frequenz
-if tx_count_24h > 10:
+# Regel 1: Betrag weicht extrem vom CSV-Durchschnitt ab
+if ratio >= 20:
+    risk_score += 0.50
+    reasons.append(f"🚨 **Extreme Abweichung:** Der Betrag ({new_tx_amount:.2f} €) ist **{ratio:.1f}-mal höher** als der CSV-Durchschnitt ({user_avg_amount:.2f} €)!")
+elif ratio >= 5:
     risk_score += 0.25
-    reasons.append(f"⚠️ Ungewöhnlich viele Transaktionen ({tx_count_24h} Käufe) in 24 Stunden.")
+    reasons.append(f"⚠️ **Erhöhte Abweichung:** Der Betrag ist {ratio:.1f}-mal höher als der normale Kundendurchschnitt ({user_avg_amount:.2f} €).")
+
+# Regel 2: Betrag übersteigt den höchsten jemals getätigten Kauf aus der CSV deutlich
+if new_tx_amount > (user_max_amount * 3):
+    risk_score += 0.30
+    reasons.append(f"🚨 **Rekordkauf:** Dieser Kauf übertrifft den höchsten bisherigen CSV-Kauf ({user_max_amount:.2f} €) um mehr als das 3-fache.")
+
+# Regel 3: Guthaben / Verfügungsrahmen im Vergleich zum Betrag
+if new_tx_amount > estimated_balance:
+    risk_score += 0.40
+    reasons.append(f"🚨 **Guthaben überschritten:** Der Kaufbetrag liegt über dem geschätzten Budget ({estimated_balance:.2f} €).")
+elif estimated_balance >= 5000 and new_tx_amount <= 1000:
+    # Bonus bei wohlhabenden Kunden
+    risk_score = max(0.0, risk_score - 0.20)
+    reasons.append("🟢 **Hohes Guthaben:** Kunde hat ausreichend Rahmen für Käufe bis 1.000 €.")
 
 # Regel 4: Standort
-if tx_location == "Risikoland (Sperrgebiet)":
-    risk_score += 0.40
-    reasons.append("⚠️ Zahlung stammt aus einem Risikoland.")
+if new_tx_location == "Risikoland":
+    risk_score += 0.35
+    reasons.append("⚠️ **Risikoland:** Transaktion kommt aus einer verdächtigen Region.")
 
-# Regel 5: Technische Muster-Anomalie (PCA / KI)
-if pattern_anomaly > 4.0:
-    risk_score += 0.30
-    reasons.append("⚠️ Technische KI-Analyse erkennt verdächtige Transaktions-Header/IP-Muster.")
-
-# VIP Bonus (Toleranter bei reichen Kunden)
-if user_risk_class == "VIP / Premium" and tx_amount <= user_balance:
-    risk_score = max(0.0, risk_score - 0.20)
-
-# Begrenzung auf 0 % bis 100 %
+# Prozentualer Risiko-Score
 fraud_probability = min(1.0, risk_score) * 100
 
-# ---------------------------------------------------------
-# ERGEBNIS-ANZEIGE
-# ---------------------------------------------------------
-st.header("📊 Analyse-Ergebnis")
-
+# =========================================================
+# ERGEBNIS-AUSGABE
+# =========================================================
 res_col1, res_col2 = st.columns([1, 2])
 
 with res_col1:
     st.metric("Berechnetes Risiko", f"{fraud_probability:.1f} %")
     
-    if fraud_probability < 30:
+    if fraud_probability < 35:
         st.success("✅ **STATUS: FREIGEGEBEN (APPROVE)**")
-        st.caption("Transaktion wird ohne Störung verarbeitet.")
+        st.caption("Verhalten entspricht dem Kundenprofil aus der CSV.")
     elif fraud_probability < 70:
         st.warning("⚠️ **STATUS: PRÜFUNG ERFORDERLICH (2FA / TAN)**")
-        st.caption("Kunde muss die Zahlung in der Banking-App mit SMS/Push-TAN bestätigen.")
+        st.caption("Sicherheitsprüfung notwendig (SMS-TAN senden).")
     else:
         st.error("🚨 **STATUS: BLOCKIERT (BLOCK)**")
-        st.caption("Transaktion wurde wegen Betrugsverdacht gestoppt!")
+        st.caption("Transaktion wird wegen hoher Abweichung gestoppt.")
 
 with res_col2:
-    st.subheader("Begründung & Risiko-Faktoren:")
+    st.subheader("Begründung (CSV-Vergleich):")
     if len(reasons) == 0:
-        st.write("🟢 Keine Auffälligkeiten. Das Verhalten entspricht genau dem üblichen Kundenprofil.")
+        st.write("🟢 Keine Auffälligkeiten. Die Transaktion passt perfekt zum bisherigen Kaufverhalten aus der CSV.")
     else:
         for r in reasons:
             st.write(r)
-
-# ---------------------------------------------------------
-# SIMULATIONEN ZUM SCHNELLTESTEN
-# ---------------------------------------------------------
-st.write("---")
-st.subheader("💡 Schnelltest-Szenarien")
-st.caption("Vergleiche das System mit deinen zwei Gedanken-Beispielen:")
-
-sc1, sc2 = st.columns(2)
-
-with sc1:
-    st.info("**Szenario A (Kunde mit wenig Guthaben):**\n- Kauf: 1.000 €\n- Ø Einkauf: 25 €\n- Guthaben: 1.500 €\n👉 **Ergebnis:** Das System schlägt Alarm (Verhaltensabweichung).")
-
-with sc2:
-    st.success("**Szenario B (Kunde mit viel Guthaben / VIP):**\n- Kauf: 1.000 €\n- Ø Einkauf: 300 €\n- Guthaben: 8.000 €\n👉 **Ergebnis:** Das System gibt die Transaktion problemlos frei.")
