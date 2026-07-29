@@ -10,7 +10,7 @@ import os
 # =========================================================
 st.set_page_config(page_title="Fraud Detector - CSV & Verhalten", layout="wide")
 
-# 🎯 Optimaler Schwellenwert aus deiner Schwellenwert-Analyse / F1-Kurve
+# 🎯 Optimaler Schwellenwert aus der Modell-Evaluierung
 MSE_THRESHOLD = 9.25
 
 # =========================================================
@@ -42,7 +42,7 @@ def load_ml_pipeline():
 autoencoder, scaler = load_ml_pipeline()
 
 # =========================================================
-# HEADER & TITEL (wie im Screenshot)
+# HEADER & TITEL
 # =========================================================
 st.title("💳 Betrugsdetektor: CSV-Historie & Live-Prüfung")
 st.write("Dieses System analysiert die Historie eines Kunden aus einer CSV-Datei und beurteilt eine **neue Transaktion** anhand seines bisherigen Verhaltens.")
@@ -91,3 +91,126 @@ if amount_col is not None:
     user_total_spent = float(df_history[amount_col].sum())
     total_transactions = len(df_history)
 else:
+    st.error("⚠️ Keine passende Spalte für den Transaktionsbetrag gefunden (z. B. 'Amount' oder 'betrag').")
+    st.stop()
+
+# Angenommenes Kontoguthaben / Verfügungsrahmen
+estimated_balance = max(2000.0, user_total_spent * 1.5)
+
+# =========================================================
+# SCHRITT 2: Berechnetes Kundenprofil anzeigen
+# =========================================================
+st.write("---")
+st.header("2. Berechnetes Kundenprofil (aus CSV ermittelt)")
+
+col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+col_p1.metric("Ø Ausgaben / Kauf", f"{user_avg_amount:.2f} €")
+col_p2.metric("Höchster Bisheriger Kauf", f"{user_max_amount:.2f} €")
+col_p3.metric("Gesamtzahl Käufe (CSV)", f"{total_transactions}")
+col_p4.metric("Geschätztes Rahmen/Guthaben", f"{estimated_balance:.2f} €")
+
+# =========================================================
+# SCHRITT 3: Neue Transaktion eingeben
+# =========================================================
+st.write("---")
+st.header("3. Neue Transaktion zur Beurteilung eingeben")
+
+col_in1, col_in2, col_in3 = st.columns(3)
+
+with col_in1:
+    new_tx_amount = st.number_input("Neuer Kaufbetrag (€)", min_value=1.0, max_value=50000.0, value=1000.0, step=10.0)
+
+with col_in2:
+    new_tx_location = st.selectbox("Standort", ["Inland (Normal)", "Ausland (Online)", "Risikoland"])
+
+with col_in3:
+    new_tx_24h_count = st.slider("Weitere Käufe in den letzten 24h", 0, 20, 1)
+
+# =========================================================
+# SCHRITT 4: LOGIK & BEURTEILUNG (Autoencoder + CSV-Profil)
+# =========================================================
+st.write("---")
+st.header("⚖️ Beurteilung der neuen Transaktion")
+
+risk_score = 0.0
+reasons = []
+
+# --- A) AUTOENCODER MODEL AUSWERTUNG (MSE & THRESHOLD) ---
+mse_calculated = None
+if autoencoder is not None and scaler is not None:
+    try:
+        scaled_amount = scaler.transform(np.array([[new_tx_amount]]))[0][0]
+        num_features = autoencoder.input_shape[1] if hasattr(autoencoder, 'input_shape') else 29
+        input_vector = np.zeros((1, num_features))
+        input_vector[0, -1] = scaled_amount
+        
+        reconstruction = autoencoder.predict(input_vector, verbose=0)
+        mse_calculated = float(np.mean(np.power(input_vector - reconstruction, 2)))
+        
+        if mse_calculated >= MSE_THRESHOLD:
+            risk_score += 0.50
+            reasons.append(f"🤖 **Autoencoder-Auffälligkeit:** MSE `{mse_calculated:.2f}` überschreitet den Schwellenwert von `{MSE_THRESHOLD}`.")
+        else:
+            reasons.append(f"🟢 **Autoencoder-Unauffällig:** MSE `{mse_calculated:.2f}` liegt unter dem Schwellenwert (`{MSE_THRESHOLD}`).")
+    except Exception as e:
+        reasons.append(f"ℹ️ KI-Modell Auswertung übersprungen: {e}")
+
+# --- B) REGELBASIERTE PRÜFUNG (CSV-VERGLEICH) ---
+ratio = new_tx_amount / user_avg_amount if user_avg_amount > 0 else 1.0
+
+# Regel 1: Betrag weicht extrem vom CSV-Durchschnitt ab
+if ratio >= 20:
+    risk_score += 0.50
+    reasons.append(f"🚨 **Extreme Abweichung:** Der Betrag ({new_tx_amount:.2f} €) ist **{ratio:.1f}-mal höher** als der CSV-Durchschnitt ({user_avg_amount:.2f} €)!")
+elif ratio >= 5:
+    risk_score += 0.25
+    reasons.append(f"⚠️ **Erhöhte Abweichung:** Der Betrag ist {ratio:.1f}-mal höher als der normale Kundendurchschnitt ({user_avg_amount:.2f} €).")
+
+# Regel 2: Betrag übersteigt den höchsten bisherigen Kauf aus der CSV deutlich
+if new_tx_amount > (user_max_amount * 3):
+    risk_score += 0.30
+    reasons.append(f"🚨 **Rekordkauf:** Dieser Kauf übertrifft den höchsten bisherigen CSV-Kauf ({user_max_amount:.2f} €) um mehr als das 3-fache.")
+
+# Regel 3: Guthaben / Verfügungsrahmen
+if new_tx_amount > estimated_balance:
+    risk_score += 0.40
+    reasons.append(f"🚨 **Guthaben überschritten:** Der Kaufbetrag liegt über dem geschätzten Budget ({estimated_balance:.2f} €).")
+elif estimated_balance >= 5000 and new_tx_amount <= 1000:
+    risk_score = max(0.0, risk_score - 0.20)
+    reasons.append("🟢 **Hohes Guthaben:** Kunde hat ausreichend Rahmen für Käufe bis 1.000 €.")
+
+# Regel 4: Standort
+if new_tx_location == "Risikoland":
+    risk_score += 0.35
+    reasons.append("⚠️ **Risikoland:** Transaktion kommt aus einer verdächtigen Region.")
+
+# Berechne prozentuales Gesamt-Risiko
+fraud_probability = min(1.0, risk_score) * 100
+
+# =========================================================
+# ERGEBNIS-AUSGABE
+# =========================================================
+res_col1, res_col2 = st.columns([1, 2])
+
+with res_col1:
+    st.metric("Berechnetes Risiko", f"{fraud_probability:.1f} %")
+    if mse_calculated is not None:
+        st.caption(f"Autoencoder MSE: `{mse_calculated:.2f}` (Limit: `{MSE_THRESHOLD}`)")
+    
+    if fraud_probability < 35:
+        st.success("✅ **STATUS: FREIGEGEBEN (APPROVE)**")
+        st.caption("Verhalten entspricht dem Kundenprofil aus der CSV.")
+    elif fraud_probability < 70:
+        st.warning("⚠️ **STATUS: PRÜFUNG ERFORDERLICH (2FA / TAN)**")
+        st.caption("Sicherheitsprüfung notwendig (SMS-TAN senden).")
+    else:
+        st.error("🚨 **STATUS: BLOCKIERT (BLOCK)**")
+        st.caption("Transaktion wird wegen hoher Abweichung gestoppt.")
+
+with res_col2:
+    st.subheader("Begründung (CSV- & KI-Analyse):")
+    if len(reasons) == 0:
+        st.write("🟢 Keine Auffälligkeiten. Die Transaktion passt perfekt zum bisherigen Kaufverhalten aus der CSV.")
+    else:
+        for r in reasons:
+            st.write(r)
