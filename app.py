@@ -70,23 +70,27 @@ with st.expander("📊 Kundendaten & Historie aus der CSV anzeigen"):
     st.dataframe(df_history)
 
 # =========================================================
+# =========================================================
 # AUTOMATISCHE PROFIL-BERECHNUNG AUS DER CSV
 # =========================================================
-user_avg_amount = df_history["betrag"].mean()
-user_max_amount = df_history["betrag"].max()
-user_total_spent = df_history["betrag"].sum()
-total_transactions = len(df_history)
+# Flexible Erkennung der Betrags-Spalte (egal ob "Amount" oder "betrag")
+amount_col = None
+for col in ["Amount", "betrag", "Amount (€)", "Betrag"]:
+    if col in df_history.columns:
+        amount_col = col
+        break
 
+if amount_col is not None:
+    user_avg_amount = df_history[amount_col].mean()
+    user_max_amount = df_history[amount_col].max()
+    user_total_spent = df_history[amount_col].sum()
+    total_transactions = len(df_history)
+else:
+    st.error("⚠️ In der hochgeladenen CSV wurde keine Spalte für den Betrag (z. B. 'Amount' oder 'betrag') gefunden!")
+    st.stop()
+
+# Angenommenes Kontoguthaben basierend auf Historie
 estimated_balance = max(2000.0, user_total_spent * 1.5)
-
-st.write("---")
-st.header("2. Berechnetes Kundenprofil (aus CSV ermittelt)")
-
-col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-col_p1.metric("Ø Ausgaben / Kauf", f"{user_avg_amount:.2f} €")
-col_p2.metric("Höchster Bisheriger Kauf", f"{user_max_amount:.2f} €")
-col_p3.metric("Gesamtzahl Käufe (CSV)", f"{total_transactions}")
-col_p4.metric("Geschätztes Rahmen/Guthaben", f"{estimated_balance:.2f} €")
 
 # =========================================================
 # SCHRITT 2: Neue Transaktion eingeben
