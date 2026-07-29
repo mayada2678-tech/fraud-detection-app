@@ -6,42 +6,46 @@ import pickle
 import os
 
 # =========================================================
-# KONFIGURATION & MODELL-PARAMETER
+# SEITEN-KONFIGURATION
 # =========================================================
 st.set_page_config(page_title="Fraud Detector - CSV & Verhalten", layout="wide")
 
-# 🎯 Optimaler Schwellenwert aus der F1-Score-Optimierung
+# 🎯 Optimaler Schwellenwert aus deiner Schwellenwert-Analyse / F1-Kurve
 MSE_THRESHOLD = 9.25
 
 # =========================================================
-# HELFERFUNKTION: MODELL & SCALER LADEN
+# HELFERFUNKTION: ML-MODELL & SCALER LADEN
 # =========================================================
 @st.cache_resource
 def load_ml_pipeline():
     """
-    Lädt das Autoencoder-Modell und den PowerTransformer/Scaler.
-    Ersetze die Dateipfade bei Bedarf durch deine echten Pfade.
+    Lädt das trainierte Autoencoder-Modell und den Scaler (pickle).
     """
-    try:
-        # Autoencoder Keras Modell
-        autoencoder = tf.keras.models.load_model("autoencoder_model.h5")
-        
-        # PowerTransformer / Scaler
-        with open("scaler.pkl", "rb") as f:
-            scaler = pickle.load(f)
+    autoencoder = None
+    scaler = None
+    
+    if os.path.exists("autoencoder_model.h5"):
+        try:
+            autoencoder = tf.keras.models.load_model("autoencoder_model.h5")
+        except Exception:
+            pass
             
-        return autoencoder, scaler
-    except Exception as e:
-        # Falls Dateien nicht gefunden wurden, geben wir None zurück (für Demo-Betrieb)
-        return None, None
+    if os.path.exists("scaler.pkl"):
+        try:
+            with open("scaler.pkl", "rb") as f:
+                scaler = pickle.load(f)
+        except Exception:
+            pass
+            
+    return autoencoder, scaler
 
 autoencoder, scaler = load_ml_pipeline()
 
 # =========================================================
-# HEADER & TITEL
+# HEADER & TITEL (wie im Screenshot)
 # =========================================================
-st.title("💳 Betrugsdetektor: CSV-Historie & Autoencoder-Prüfung")
-st.write("Dieses System kombiniert **Autoencoder-Anomalieerkennung** mit **regelbasierter CSV-Verhaltensanalyse**.")
+st.title("💳 Betrugsdetektor: CSV-Historie & Live-Prüfung")
+st.write("Dieses System analysiert die Historie eines Kunden aus einer CSV-Datei und beurteilt eine **neue Transaktion** anhand seines bisherigen Verhaltens.")
 st.write("---")
 
 # =========================================================
@@ -56,6 +60,7 @@ if uploaded_file is not None:
     st.success("✅ CSV-Historie erfolgreich geladen!")
 else:
     st.info("ℹ️ Keine CSV hochgeladen. Es werden Demo-Historien-Daten genutzt.")
+    # Erstelle Beispiel-Historie eines normalen Kunden
     data = {
         "transaktion_id": [f"TX{i}" for i in range(1, 21)],
         "betrag": [15.50, 22.00, 8.90, 45.00, 12.00, 120.00, 18.50, 25.00, 30.00, 14.20,
@@ -66,150 +71,23 @@ else:
     }
     df_history = pd.DataFrame(data)
 
+# Historie in einem ausklappbaren Bereich anzeigen
 with st.expander("📊 Kundendaten & Historie aus der CSV anzeigen"):
     st.dataframe(df_history)
 
 # =========================================================
-# =========================================================
 # AUTOMATISCHE PROFIL-BERECHNUNG AUS DER CSV
 # =========================================================
-# Flexible Erkennung der Betrags-Spalte (egal ob "Amount" oder "betrag")
+# Flexible Erkennung der Betrags-Spalte (für creditcard_small.csv / Amount vs. betrag)
 amount_col = None
-for col in ["Amount", "betrag", "Amount (€)", "Betrag"]:
+for col in ["Amount", "betrag", "Amount (€)", "Betrag", "amount"]:
     if col in df_history.columns:
         amount_col = col
         break
 
 if amount_col is not None:
-    user_avg_amount = df_history[amount_col].mean()
-    user_max_amount = df_history[amount_col].max()
-    user_total_spent = df_history[amount_col].sum()
+    user_avg_amount = float(df_history[amount_col].mean())
+    user_max_amount = float(df_history[amount_col].max())
+    user_total_spent = float(df_history[amount_col].sum())
     total_transactions = len(df_history)
 else:
-    st.error("⚠️ In der hochgeladenen CSV wurde keine Spalte für den Betrag (z. B. 'Amount' oder 'betrag') gefunden!")
-    st.stop()
-
-# Angenommenes Kontoguthaben basierend auf Historie
-estimated_balance = max(2000.0, user_total_spent * 1.5)
-
-# =========================================================
-# SCHRITT 2: Neue Transaktion eingeben
-# =========================================================
-st.write("---")
-st.header("3. Neue Transaktion zur Beurteilung eingeben")
-
-col_in1, col_in2, col_in3 = st.columns(3)
-
-with col_in1:
-    new_tx_amount = st.number_input("Neuer Kaufbetrag (€)", min_value=1.0, max_value=50000.0, value=1000.0, step=10.0)
-
-with col_in2:
-    new_tx_location = st.selectbox("Standort", ["Inland (Normal)", "Ausland (Online)", "Risikoland"])
-
-with col_in3:
-    new_tx_24h_count = st.slider("Weitere Käufe in den letzten 24h", 0, 20, 1)
-
-# =========================================================
-# SCHRITT 3: LOGIK & BEURTEILUNG (Autoencoder MSE & Regelsystem)
-# =========================================================
-st.write("---")
-st.header("⚖️ Beurteilung der neuen Transaktion")
-
-ratio = new_tx_amount / user_avg_amount if user_avg_amount > 0 else 1.0
-risk_score = 0.0
-reasons = []
-
-# ---------------------------------------------------------
-# 🤖 AUTOENCODER PRÜFUNG (MSE vs Threshold = 9.25)
-# ---------------------------------------------------------
-mse_calculated = None
-
-if autoencoder is not None and scaler is not None:
-    # 1. Beispieldaten für Transaktions-Features erstellen (29/30 Features wie im CreditCard Dataset)
-    # Ersetze dies durch deine tatsächlichen Input-Features
-    dummy_input = np.zeros((1, scaler.n_features_in_)) 
-    dummy_input[0, -1] = new_tx_amount  # Setze Betrag an die Stelle des Betrags-Features
-    
-    # 2. Skalierung
-    scaled_input = scaler.transform(dummy_input)
-    
-    # 3. Vorhersage / Rekonstruktion
-    reconstruction = autoencoder.predict(scaled_input, verbose=0)
-    
-    # 4. Berechnung des Rekonstruktionsfehlers (MSE)
-    mse_calculated = np.mean(np.power(scaled_input - reconstruction, 2), axis=1)[0]
-    
-    # 5. Bewertung basierend auf MSE_THRESHOLD = 9.25
-    if mse_calculated >= MSE_THRESHOLD:
-        risk_score += 0.60
-        reasons.append(f"🚨 **Autoencoder-Anomalie:** Rekonstruktionsfehler (MSE: **{mse_calculated:.2f}**) überschreitet den Schwellenwert von **{MSE_THRESHOLD}**!")
-    else:
-        reasons.append(f"🟢 **Autoencoder Unauffällig:** Rekonstruktionsfehler (MSE: **{mse_calculated:.2f}**) liegt unter dem Schwellenwert von **{MSE_THRESHOLD}**.")
-else:
-    # Simulation, falls kein .h5 / .pkl File geladen ist (Dummy-MSE für Live-Tests)
-    # Erzeugt höheren MSE bei extrem abweichenden Beträgen
-    simulated_mse = float((new_tx_amount / (user_avg_amount + 1e-5)) * 0.5)
-    mse_calculated = simulated_mse
-    
-    if simulated_mse >= MSE_THRESHOLD:
-        risk_score += 0.60
-        reasons.append(f"🚨 **Autoencoder-Anomalie (Simuliert):** MSE **{simulated_mse:.2f}** >= Threshold **{MSE_THRESHOLD}**!")
-    else:
-        reasons.append(f"🟢 **Autoencoder Unauffällig (Simuliert):** MSE **{simulated_mse:.2f}** < Threshold **{MSE_THRESHOLD}**.")
-
-# ---------------------------------------------------------
-# 📊 BRANCHEN- & VERHALTENSREGELN (CSV-Vergleich)
-# ---------------------------------------------------------
-# Regel 1: Betrag weicht extrem vom CSV-Durchschnitt ab
-if ratio >= 20:
-    risk_score += 0.50
-    reasons.append(f"🚨 **Extreme Abweichung:** Der Betrag ({new_tx_amount:.2f} €) ist **{ratio:.1f}-mal höher** als der CSV-Durchschnitt ({user_avg_amount:.2f} €)!")
-elif ratio >= 5:
-    risk_score += 0.25
-    reasons.append(f"⚠️ **Erhöhte Abweichung:** Der Betrag ist {ratio:.1f}-mal höher als der normale Kundendurchschnitt ({user_avg_amount:.2f} €).")
-
-# Regel 2: Betrag übersteigt den höchsten jemals getätigten Kauf aus der CSV deutlich
-if new_tx_amount > (user_max_amount * 3):
-    risk_score += 0.30
-    reasons.append(f"🚨 **Rekordkauf:** Dieser Kauf übertrifft den höchsten bisherigen CSV-Kauf ({user_max_amount:.2f} €) um mehr als das 3-fache.")
-
-# Regel 3: Guthaben / Verfügungsrahmen im Vergleich zum Betrag
-if new_tx_amount > estimated_balance:
-    risk_score += 0.40
-    reasons.append(f"🚨 **Guthaben überschritten:** Der Kaufbetrag liegt über dem geschätzten Budget ({estimated_balance:.2f} €).")
-elif estimated_balance >= 5000 and new_tx_amount <= 1000:
-    risk_score = max(0.0, risk_score - 0.20)
-    reasons.append("🟢 **Hohes Guthaben:** Kunde hat ausreichend Rahmen für Käufe bis 1.000 €.")
-
-# Regel 4: Standort
-if new_tx_location == "Risikoland":
-    risk_score += 0.35
-    reasons.append("⚠️ **Risikoland:** Transaktion kommt aus einer verdächtigen Region.")
-
-# Prozentualer Risiko-Score
-fraud_probability = min(1.0, risk_score) * 100
-
-# =========================================================
-# ERGEBNIS-AUSGABE
-# =========================================================
-res_col1, res_col2 = st.columns([1, 2])
-
-with res_col1:
-    st.metric("Berechnetes Gesamtrisiko", f"{fraud_probability:.1f} %")
-    if mse_calculated is not None:
-        st.metric("Berechneter MSE (Autoencoder)", f"{mse_calculated:.2f}", delta=f"Threshold: {MSE_THRESHOLD}", delta_color="inverse")
-    
-    if fraud_probability < 35:
-        st.success("✅ **STATUS: FREIGEGEBEN (APPROVE)**")
-        st.caption("Verhalten entspricht dem Kundenprofil aus der CSV.")
-    elif fraud_probability < 70:
-        st.warning("⚠️ **STATUS: PRÜFUNG ERFORDERLICH (2FA / TAN)**")
-        st.caption("Sicherheitsprüfung notwendig (SMS-TAN senden).")
-    else:
-        st.error("🚨 **STATUS: BLOCKIERT (BLOCK)**")
-        st.caption("Transaktion wird wegen hoher Abweichung gestoppt.")
-
-with res_col2:
-    st.subheader("Begründung & Detail-Analyse:")
-    for r in reasons:
-        st.write(r)
